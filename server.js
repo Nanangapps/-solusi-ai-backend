@@ -1,4 +1,3 @@
-
 import express from "express";
 import cors from "cors";
 import { GoogleGenAI } from "@google/genai";
@@ -7,68 +6,52 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json({ limit: "20kb" }));
+app.use(express.json({ limit: "5mb" }));
 
 const apiKey = process.env.GEMINI_API_KEY;
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
-const ai = apiKey
-  ? new GoogleGenAI({ apiKey })
-  : null;
-
-app.get("/", (req, res) => {
-  res.json({
-    app: "Solusi AI",
-    status: "online",
-    provider: "Google Gemini"
-  });
+app.get('/', (req, res) => {
+  res.json({ status: 'OK Live', endpoint: '/api/chat' });
 });
 
-app.post("/api/chat", async (req, res) => {
+app.post('/api/chat', async (req, res) => {
   try {
-    const message = req.body?.message;
+    const { message, messages } = req.body;
+
+    let userPrompt = "";
+    if (message) {
+      userPrompt = message;
+    } else if (messages && Array.isArray(messages) && messages.length > 0) {
+      const last = messages[messages.length - 1];
+      userPrompt = last.content || last.text || "";
+    }
+
+    if (!userPrompt.trim()) {
+      return res.status(400).json({ detail: "Pesan tidak boleh kosong." });
+    }
 
     if (!ai) {
-      return res.status(503).json({
-        error: "Gemini API belum dikonfigurasi di server."
-      });
+      return res.status(500).json({ detail: "GEMINI_API_KEY belum diset di Render" });
     }
 
-    if (typeof message !== "string" || !message.trim()) {
-      return res.status(400).json({
-        error: "Pesan tidak boleh kosong."
-      });
-    }
-
-    if (message.length > 4000) {
-      return res.status(400).json({
-        error: "Pesan maksimal 4000 karakter."
-      });
-    }
-
+    const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    
     const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-      contents: message.trim(),
-      config: {
-        systemInstruction:
-          "Kamu adalah Solusi AI, asisten yang ramah dan membantu. " +
-          "Jawab menggunakan bahasa pengguna. " +
-          "Untuk pertanyaan coding, jelaskan langkah-langkahnya " +
-          "dan berikan contoh kode yang mudah dipahami."
-      }
+      model: modelName,
+      contents: [{ role: "user", parts: [{ text: userPrompt }] }]
     });
 
-    res.json({
-      reply: result.text || "Maaf, AI belum menghasilkan jawaban."
-    });
-  } catch (error) {
-    console.error("Gemini API error:", error.message);
+    const reply = result.text || result.response?.text() || "Jawaban kosong";
 
-    res.status(500).json({
-      error: "Solusi AI sedang mengalami kendala. Silakan coba lagi."
-    });
+    res.json({ reply });
+
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ detail: e.message });
   }
 });
 
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Solusi AI berjalan di port ${port}`);
+app.listen(port, () => {
+  console.log(`Jalan di ${port}`);
 });

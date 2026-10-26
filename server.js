@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import { GoogleGenAI } from "@google/genai";
@@ -6,80 +7,143 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "10mb" }));
 
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
-// PROMPT SENIOR - INI OTAKNYA MAS BRO 😎
 const SENIOR_PROMPT = `
-Kamu adalah Solusi AI, Senior Full-Stack Developer & Coding Partner dari Indonesia yang handal, dengan pengalaman 10+ tahun.
-
-IDENTITAS WAJIB:
-- Kamu adalah Solusi AI, BUKAN Meta AI, BUKAN ChatGPT, BUKAN Gemini, BUKAN Google. Jangan pernah ngaku selain Solusi AI.
-- Dibuat oleh tim developer lokal Indonesia untuk bantu coder mas bro.
-
-GAYA BICARA SENIOR:
-- Santai, to the point, kayak senior ngobrol sama junior. Pake "mas bro" sesekali, tapi tetap profesional.
-- Jangan bertele-tele kayak tutorial. Langsung kasih solusi + kenapa harus begitu.
-- Kalo jawab kode, kasih best practice, clean code, error handling, komentar penting.
-
-ATURAN NGODING:
-1. Kalo user minta "buatkan main.dart" JANGAN kasih contoh counter gajelas itu. Kasih kode Solusi AI yang bener: ada TextEditingController, ListView chat, http post ke /api/chat, loading state, error handling.
-2. Kalo user tanya umum, jawab senior, kasih insight yang dalem, bukan definisi Google.
-3. Selalu tanya balik kalo butuh konteks biar solusi pas.
-4. Bahasa Indonesia santai, istilah coding tetap English.
-
-Contoh jawaban senior: "Oke mas bro, ini gue kasih versi senior nya ya, udah gue benerin backendUrl yang kepotong, udah ada retry logic, plus UI dark mode. Jangan pake setState sembarangan, pake logic yang ini..."
+Kamu adalah Solusi AI, asisten AI dan coding partner berbahasa Indonesia.
+Bantu pengguna memahami gambar, membaca teks, menganalisis kode,
+memperbaiki error, membuat website, dan menyusun jadwal pelajaran.
+Jawab secara jelas, akurat, dan langsung ke inti masalah.
+Jangan mengaku sebagai manusia.
+Jika gambar atau konteks tidak tersedia, jelaskan dengan jujur.
 `;
 
-app.get('/', (req, res) => {
-  res.json({ status: 'OK Live', endpoint: '/api/chat', persona: 'Solusi AI Senior' });
+app.get("/", (req, res) => {
+  res.json({
+    status: "OK Live",
+    endpoint: "/api/chat",
+    persona: "Solusi AI"
+  });
 });
 
-app.post('/api/chat', async (req, res) => {
+app.post("/api/chat", async (req, res) => {
   try {
-    const { message, messages } = req.body;
+    const { message, messages, imageBase64, mimeType } = req.body ?? {};
 
     let userPrompt = "";
-    if (message) {
+
+    if (typeof message === "string") {
       userPrompt = message;
-    } else if (messages && Array.isArray(messages) && messages.length > 0) {
+    } else if (Array.isArray(messages) && messages.length > 0) {
       const last = messages[messages.length - 1];
-      userPrompt = last.content || last.text || "";
+      userPrompt = String(last?.content ?? last?.text ?? "");
     }
 
-    if (!userPrompt.trim()) {
-      return res.status(400).json({ detail: "Pesan tidak boleh kosong mas bro." });
+    if (!userPrompt.trim() && !imageBase64) {
+      return res.status(400).json({
+        error: "Pesan atau gambar harus disertakan."
+      });
     }
 
     if (!ai) {
-      return res.status(500).json({ detail: "GEMINI_API_KEY belum diset di Render" });
+      return res.status(500).json({
+        error: "GEMINI_API_KEY belum disetel di Render."
+      });
     }
 
-    const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-    
-    // INI YANG BIKIN JADI SENIOR MAS BRO
+    const parts = [];
+
+    if (userPrompt.trim()) {
+      parts.push({ text: userPrompt });
+    }
+
+    if (imageBase64) {
+      if (typeof imageBase64 !== "string") {
+        return res.status(400).json({
+          error: "Format data gambar tidak valid."
+        });
+      }
+
+      const cleanBase64 = imageBase64.replace(
+        /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
+        ""
+      );
+
+      const supportedMimeTypes = [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/heic",
+        "image/heif"
+      ];
+
+      const resolvedMime = supportedMimeTypes.includes(mimeType)
+        ? mimeType
+        : "image/jpeg";
+
+      let imageBuffer;
+
+      try {
+        imageBuffer = Buffer.from(cleanBase64, "base64");
+      } catch {
+        return res.status(400).json({
+          error: "Data gambar tidak dapat dibaca."
+        });
+      }
+
+      if (imageBuffer.length === 0) {
+        return res.status(400).json({
+          error: "Gambar kosong atau tidak valid."
+        });
+      }
+
+      parts.push({
+        inlineData: {
+          mimeType: resolvedMime,
+          data: cleanBase64
+        }
+      });
+    }
+
+    const modelName =
+      process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
     const result = await ai.models.generateContent({
       model: modelName,
       config: {
         systemInstruction: SENIOR_PROMPT,
         temperature: 0.7,
-        maxOutputTokens: 2000,
+        maxOutputTokens: 2000
       },
-      contents: [{ role: "user", parts: [{ text: userPrompt }] }]
+      contents: [
+        {
+          role: "user",
+          parts
+        }
+      ]
     });
 
-    const reply = result.text || result.response?.text?.() || "Waduh mas bro, jawaban kosong, coba lagi ya.";
+    const reply = result.text?.trim();
 
-    res.json({ reply });
+    if (!reply) {
+      return res.status(502).json({
+        error: "Gemini tidak memberikan jawaban. Silakan coba lagi."
+      });
+    }
 
+    return res.json({ reply });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ detail: e.message });
+    console.error("Kesalahan /api/chat:", e);
+
+    return res.status(500).json({
+      error: e?.message || "Terjadi kesalahan pada backend Solusi AI."
+    });
   }
 });
 
 app.listen(port, () => {
-  console.log(`Solusi AI Senior Jalan di ${port} 😎`);
+  console.log(`Solusi AI berjalan di port ${port}`);
 });
